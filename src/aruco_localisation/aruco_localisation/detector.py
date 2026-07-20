@@ -20,6 +20,8 @@ class ArucoDetectorNode(Node):
 
         # Parameters that can be changed from the command line or a launch file.
         self.declare_parameter('image_topic', '/image_raw')
+
+        # Marker size in meters.
         self.declare_parameter('marker_length', 0.1)
         self.declare_parameter('camera_frame', 'camera_frame')
         self.declare_parameter('display_window', True)
