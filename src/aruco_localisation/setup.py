@@ -23,8 +23,9 @@ setup(
         ],
     },
     entry_points={
-    'console_scripts': [
-        'detector = aruco_localisation.detector:main',
-    ],
-},
+        'console_scripts': [
+            'detector = aruco_localisation.detector:main',
+            'tf_publisher = aruco_localisation.tf_publisher:main',
+        ],
+    },
 )
