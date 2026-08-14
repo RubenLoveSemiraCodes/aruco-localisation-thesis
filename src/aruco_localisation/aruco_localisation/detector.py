@@ -51,13 +51,24 @@ class ArucoDetectorNode(Node):
         )
 
         self.bridge = CvBridge()
+        
+        self.dictionary = cv2.aruco.getPredefinedDictionary(
+            cv2.aruco.DICT_6X6_250
+        )
+
+        self.detector_parameters = cv2.aruco.DetectorParameters()
+
+        self.aruco_detector = cv2.aruco.ArucoDetector(
+            self.dictionary,
+            self.detector_parameters
+        )
 
         # ArUco detector configuration.
         self.aruco_dictionary = cv2.aruco.getPredefinedDictionary(
             cv2.aruco.DICT_4X4_50
         )
 
-        detector_parameters = cv2.aruco.DetectorParameters_create()
+        detector_parameters = cv2.aruco.DetectorParameters()
         self.detector_parameters = detector_parameters
 
         # Your camera calibration.
@@ -128,38 +139,58 @@ class ArucoDetectorNode(Node):
 
         self.total_frames += 1
 
-        corners, ids, _ = cv2.aruco.detectMarkers(
+        gray = cv2.cvtColor(
         frame,
-        self.aruco_dictionary,
-        parameters=self.detector_parameters
-)
+        cv2.COLOR_BGR2GRAY
+    )
 
+        corners, ids, _ = self.aruco_detector.detectMarkers(gray)
+        
         if ids is not None and len(ids) > 0:
             self.detected_frames += 1
 
             cv2.aruco.drawDetectedMarkers(frame, corners, ids)
 
-            rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(
-                corners,
-                self.marker_length,
+            marker_points = np.array([
+            [-self.marker_length / 2,  self.marker_length / 2, 0],
+            [ self.marker_length / 2,  self.marker_length / 2, 0],
+            [ self.marker_length / 2, -self.marker_length / 2, 0],
+            [-self.marker_length / 2, -self.marker_length / 2, 0]
+        ], dtype=np.float32)
+
+        rvecs = []
+        tvecs = []
+
+        for marker_corners in corners:
+            success, rvec, tvec = cv2.solvePnP(
+                marker_points,
+                marker_corners,
                 self.camera_matrix,
-                self.dist_coeffs
+                self.dist_coeffs,
+                flags=cv2.SOLVEPNP_IPPE_SQUARE
             )
+
+            if success:
+                rvecs.append(rvec)
+                tvecs.append(tvec)
 
             for index, marker_id_array in enumerate(ids):
                 marker_id = int(marker_id_array[0])
 
-                rotation_vector = rvecs[index][0]
-                translation_vector = tvecs[index][0]
+                rotation_vector = rvecs[index]
+                translation_vector = tvecs[index]
+                
+                rvec = np.asarray(rvec, dtype=np.float64).reshape(3, 1)
+                tvec = np.asarray(tvec, dtype=np.float64).reshape(3, 1)
 
-                cv2.drawFrameAxes(
-                    frame,
-                    self.camera_matrix,
-                    self.dist_coeffs,
-                    rotation_vector,
-                    translation_vector,
-                    self.marker_length * 0.75
-                )
+                # cv2.drawFrameAxes(
+                #     frame,
+                #     self.camera_matrix,
+                #     self.dist_coeffs,
+                #     rotation_vector,
+                #     translation_vector,
+                #     self.marker_length * 0.75
+                # )
 
                 distance = float(np.linalg.norm(translation_vector))
 
