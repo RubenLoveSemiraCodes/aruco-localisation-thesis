@@ -117,6 +117,8 @@ class ArucoDetectorNode(Node):
 
         self.total_frames = 0
         self.detected_frames = 0
+        self.max_frames = 100
+        self.finsihed = False
 
         self.get_logger().info('ArUco detector started')
         self.get_logger().info(f'Subscribing to: {image_topic}')
@@ -125,6 +127,9 @@ class ArucoDetectorNode(Node):
 
     def image_callback(self, image_message: Image) -> None:
         """Process one ROS camera image."""
+        
+        if self.finsihed:
+            return
 
         try:
             frame = self.bridge.imgmsg_to_cv2(
@@ -138,6 +143,15 @@ class ArucoDetectorNode(Node):
             return
 
         self.total_frames += 1
+        if self.total_frames > self.max_frames:
+            self.finsihed = True
+            self.get_logger().info(
+                f'Maximum frame count of {self.max_frames} reached. '
+                'Stopping detection.'
+            )
+            return
+        
+        
 
         gray = cv2.cvtColor(
         frame,
@@ -219,11 +233,14 @@ class ArucoDetectorNode(Node):
                 self.pose_publisher.publish(pose_message)
                 self.id_publisher.publish(id_message)
 
+        # detection_rate = (
+        #     100.0 * self.detected_frames / self.total_frames
+        #     if self.total_frames > 0
+        #     else 0.0
+        # )
         detection_rate = (
-            100.0 * self.detected_frames / self.total_frames
-            if self.total_frames > 0
-            else 0.0
-        )
+            self.detected_frames / self.total_frames
+        ) * 100
 
         cv2.putText(
             frame,
@@ -237,7 +254,7 @@ class ArucoDetectorNode(Node):
 
         cv2.putText(
             frame,
-            f'Frames: {self.total_frames}',
+            f'Frames: {self.total_frames}/{self.max_frames}',
             (30, 75),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.8,
@@ -250,6 +267,18 @@ class ArucoDetectorNode(Node):
         if self.display_window:
             cv2.imshow('ArUco Pose Estimation', frame)
             cv2.waitKey(1)
+            
+        if self.total_frames >= self.max_frames:
+            self.get_logger().info(
+                f'Trial complete: {self.detected_frames}/{self.total_frames} '
+                f'detected ({detection_rate:.1f}%)'
+            )
+
+            self.finished = True
+            rclpy.shutdown()
+            return
+            
+
 
     def create_pose_message(
         self,
