@@ -100,6 +100,17 @@ class ArucoDetectorNode(Node):
             '/aruco/pose',
             10
         )
+        self.total_frames_publisher = self.create_publisher(
+            Int32,
+            '/aruco/total_frames',
+            10
+        )
+
+        self.detected_frames_publisher = self.create_publisher(
+            Int32,
+            '/aruco/detected_frames',
+            10
+        )
 
         # Publish the ID corresponding to the pose.
         self.id_publisher = self.create_publisher(
@@ -238,6 +249,14 @@ class ArucoDetectorNode(Node):
         #     if self.total_frames > 0
         #     else 0.0
         # )
+        total_msg = Int32()
+        total_msg.data = self.total_frames
+        self.total_frames_publisher.publish(total_msg)
+
+        detected_msg = Int32()
+        detected_msg.data = self.detected_frames
+        self.detected_frames_publisher.publish(detected_msg)
+        
         detection_rate = (
             self.detected_frames / self.total_frames
         ) * 100
