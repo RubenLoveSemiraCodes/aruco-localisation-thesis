@@ -97,10 +97,18 @@ class OptitrackTransform(Node):
         # --------------------------------------------------
 
         self.B_T_M = np.eye(4)
+        
+        theta = np.deg2rad(90)
 
-        self.B_T_M[0, 3] = 0.10
-        self.B_T_M[1, 3] = 0.00
-        self.B_T_M[2, 3] = 0.00
+        self.B_T_M[:3, :3] = np.array([
+            [np.cos(theta), -np.sin(theta), 0],
+            [np.sin(theta),  np.cos(theta), 0],
+            [0,              0,             1]
+        ])
+
+        self.B_T_M[0, 3] = 0#0.019
+        self.B_T_M[1, 3] = 0#0.0075
+        self.B_T_M[2, 3] = 0#0.00146
 
         # --------------------------------------------------
         # ArUco subscription
@@ -164,9 +172,28 @@ class OptitrackTransform(Node):
 
         # OptiTrack:
         # OptiTrack world -> rigid body
+        
         O_T_B = pose_to_matrix(
             self.optitrack_pose.pose
         )
+        
+        # TEST
+        
+        # O_T_B_raw = pose_to_matrix(
+        #     self.optitrack_pose.pose
+        # )
+
+        # # Axis correction between OptiTrack/VRPN and camera-style coordinates
+        # R_axis = np.array([
+        #     [1,  0,  0],
+        #     [0,  0, 1],
+        #     [0,  -1,  0]
+        # ])
+
+        # T_axis = np.eye(4)
+        # T_axis[:3, :3] = R_axis
+
+        # O_T_B = T_axis @ O_T_B_raw
 
         # --------------------------------------------------
         # CALIBRATION
@@ -181,18 +208,52 @@ class OptitrackTransform(Node):
 
         if self.C_T_O is None:
 
-            self.C_T_O = (
-                C_T_M
-                @ np.linalg.inv(self.B_T_M)
-                @ np.linalg.inv(O_T_B)
-            )
+    # --------------------------------------------------
+    # 1. FIXED AXIS MAPPING
+    # OptiTrack world -> camera frame
+    # --------------------------------------------------
+
+            R_C_O = np.array([
+                [1, 0, 0],
+                [0, -1, 0],
+                [0, 0, -1]
+            ], dtype=np.float64)
+
+            # --------------------------------------------------
+            # 2. Find marker position according to OptiTrack
+            #    BEFORE translating into camera frame
+            #
+            # O_T_M = O_T_B * B_T_M
+            # --------------------------------------------------
+
+            O_T_M = O_T_B @ self.B_T_M
+
+            p_O_M = O_T_M[:3, 3]
+            p_C_M = C_T_M[:3, 3]
+
+            # --------------------------------------------------
+            # 3. Calculate TRANSLATION ONLY
+            #
+            # p_C_M = R_C_O * p_O_M + t_C_O
+            #
+            # therefore:
+            #
+            # t_C_O = p_C_M - R_C_O * p_O_M
+            # --------------------------------------------------
+
+            t_C_O = p_C_M - (R_C_O @ p_O_M)
+
+            # --------------------------------------------------
+            # 4. Construct complete C_T_O
+            # --------------------------------------------------
+
+            self.C_T_O = np.eye(4)
+
+            self.C_T_O[:3, :3] = R_C_O
+            self.C_T_O[:3, 3] = t_C_O
 
             self.get_logger().info(
-                'Camera -> OptiTrack calibration complete'
-            )
-
-            self.get_logger().info(
-                'KEEP CAMERA AND OPTITRACK WORLD FIXED'
+                f'Calibration complete\nC_T_O =\n{self.C_T_O}'
             )
 
         # --------------------------------------------------
@@ -210,6 +271,21 @@ class OptitrackTransform(Node):
         # Move from rigid-body origin to marker origin
         #
         # C_T_M_opti = C_T_B * B_T_M
+        # --------------------------------------------------
+        
+        # --------------------------------------------------
+        # TEST MAKER OFFSET IN RVIZ - START
+        
+        # B_T_M_test = self.B_T_M.copy()
+
+        # B_T_M_test[0, 3] += 1.0
+
+        # C_T_M_opti = (
+        #     C_T_B
+        #     @ B_T_M_test
+        # )
+        
+        # TEST MAKER OFFSET IN RVIZ - END
         # --------------------------------------------------
 
         C_T_M_opti = (

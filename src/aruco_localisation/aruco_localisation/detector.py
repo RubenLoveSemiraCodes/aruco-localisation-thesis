@@ -117,7 +117,7 @@ class ArucoDetectorNode(Node):
 
         self.total_frames = 0
         self.detected_frames = 0
-        self.max_frames = 100
+        self.max_frames = 1000
         self.finsihed = False
 
         self.get_logger().info('ArUco detector started')
