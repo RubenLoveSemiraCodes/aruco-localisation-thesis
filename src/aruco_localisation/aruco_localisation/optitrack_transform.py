@@ -106,9 +106,9 @@ class OptitrackTransform(Node):
             [0,              0,             1]
         ])
 
-        self.B_T_M[0, 3] = 0#0.019
-        self.B_T_M[1, 3] = 0#0.0075
-        self.B_T_M[2, 3] = 0#0.00146
+        self.B_T_M[0, 3] = 0.19
+        self.B_T_M[1, 3] = 0.075
+        self.B_T_M[2, 3] = 0.0146
 
         # --------------------------------------------------
         # ArUco subscription
@@ -137,6 +137,12 @@ class OptitrackTransform(Node):
             '/vrpn_mocap/rigidbody1/pose',
             self.optitrack_callback,
             optitrack_qos
+        )
+        
+        self.body_pose_pub = self.create_publisher(
+            PoseStamped,
+            '/optitrack/body_pose_camera',
+            10
         )
 
         # --------------------------------------------------
@@ -292,6 +298,25 @@ class OptitrackTransform(Node):
             C_T_B
             @ self.B_T_M
         )
+        
+        # Publish rigid-body origin in camera frame
+        body_output = PoseStamped()
+
+        body_output.header.stamp = msg.header.stamp
+        body_output.header.frame_id = self.aruco_pose.header.frame_id
+
+        body_output.pose.position.x = float(C_T_B[0, 3])
+        body_output.pose.position.y = float(C_T_B[1, 3])
+        body_output.pose.position.z = float(C_T_B[2, 3])
+
+        q_body = matrix_to_quaternion(C_T_B[:3, :3])
+
+        body_output.pose.orientation.x = float(q_body[0])
+        body_output.pose.orientation.y = float(q_body[1])
+        body_output.pose.orientation.z = float(q_body[2])
+        body_output.pose.orientation.w = float(q_body[3])
+
+        self.body_pose_pub.publish(body_output)
 
         # --------------------------------------------------
         # Publish
