@@ -1,377 +1,454 @@
-##!/usr/bin/env python3
+#!/usr/bin/env python3
 
-import numpy as np
 import rclpy
-
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, TransformStamped
+from tf2_ros import StaticTransformBroadcaster
+from tf2_ros import TransformBroadcaster
+import numpy as np
 
 
-def quaternion_to_matrix(qx, qy, qz, qw):
-    q = np.array([qx, qy, qz, qw], dtype=np.float64)
-    q = q / np.linalg.norm(q)
+# ============================================================
+# HELPER FUNCTIONS
+# ============================================================
 
-    x, y, z, w = q
+def quaternion_to_rotation_matrix(qx, qy, qz, qw):
 
-    R = np.array([
-        [1 - 2*(y*y + z*z), 2*(x*y - z*w),     2*(x*z + y*w)],
-        [2*(x*y + z*w),     1 - 2*(x*x + z*z), 2*(y*z - x*w)],
-        [2*(x*z - y*w),     2*(y*z + x*w),     1 - 2*(x*x + y*y)]
+    return np.array([
+        [
+            1 - 2 * (qy*qy + qz*qz),
+            2 * (qx*qy - qz*qw),
+            2 * (qx*qz + qy*qw)
+        ],
+        [
+            2 * (qx*qy + qz*qw),
+            1 - 2 * (qx*qx + qz*qz),
+            2 * (qy*qz - qx*qw)
+        ],
+        [
+            2 * (qx*qz - qy*qw),
+            2 * (qy*qz + qx*qw),
+            1 - 2 * (qx*qx + qy*qy)
+        ]
     ])
 
-    return R
 
+def rotation_matrix_to_quaternion(R):
 
-def matrix_to_quaternion(R):
     trace = np.trace(R)
 
     if trace > 0:
+
         s = np.sqrt(trace + 1.0) * 2
+
         qw = 0.25 * s
         qx = (R[2, 1] - R[1, 2]) / s
         qy = (R[0, 2] - R[2, 0]) / s
         qz = (R[1, 0] - R[0, 1]) / s
 
-    elif R[0, 0] > R[1, 1] and R[0, 0] > R[2, 2]:
-        s = np.sqrt(1 + R[0, 0] - R[1, 1] - R[2, 2]) * 2
+    elif (
+        R[0, 0] > R[1, 1]
+        and R[0, 0] > R[2, 2]
+    ):
+
+        s = np.sqrt(
+            1.0
+            + R[0, 0]
+            - R[1, 1]
+            - R[2, 2]
+        ) * 2
+
         qw = (R[2, 1] - R[1, 2]) / s
         qx = 0.25 * s
         qy = (R[0, 1] + R[1, 0]) / s
         qz = (R[0, 2] + R[2, 0]) / s
 
     elif R[1, 1] > R[2, 2]:
-        s = np.sqrt(1 + R[1, 1] - R[0, 0] - R[2, 2]) * 2
+
+        s = np.sqrt(
+            1.0
+            + R[1, 1]
+            - R[0, 0]
+            - R[2, 2]
+        ) * 2
+
         qw = (R[0, 2] - R[2, 0]) / s
         qx = (R[0, 1] + R[1, 0]) / s
         qy = 0.25 * s
         qz = (R[1, 2] + R[2, 1]) / s
 
     else:
-        s = np.sqrt(1 + R[2, 2] - R[0, 0] - R[1, 1]) * 2
+
+        s = np.sqrt(
+            1.0
+            + R[2, 2]
+            - R[0, 0]
+            - R[1, 1]
+        ) * 2
+
         qw = (R[1, 0] - R[0, 1]) / s
         qx = (R[0, 2] + R[2, 0]) / s
         qy = (R[1, 2] + R[2, 1]) / s
         qz = 0.25 * s
 
-    return np.array([qx, qy, qz, qw])
+    q = np.array([qx, qy, qz, qw])
+
+    q = q / np.linalg.norm(q)
+
+    return q
 
 
 def pose_to_matrix(pose):
-    T = np.eye(4)
 
-    T[:3, :3] = quaternion_to_matrix(
-        pose.orientation.x,
-        pose.orientation.y,
-        pose.orientation.z,
-        pose.orientation.w
+    qx = pose.orientation.x
+    qy = pose.orientation.y
+    qz = pose.orientation.z
+    qw = pose.orientation.w
+
+    R = quaternion_to_rotation_matrix(
+        qx,
+        qy,
+        qz,
+        qw
     )
 
-    T[0, 3] = pose.position.x
-    T[1, 3] = pose.position.y
-    T[2, 3] = pose.position.z
+    T = np.eye(4)
+
+    T[:3, :3] = R
+
+    T[:3, 3] = np.array([
+        pose.position.x,
+        pose.position.y,
+        pose.position.z
+    ])
 
     return T
 
 
-class OptitrackTransform(Node):
+def matrix_to_pose_stamped(T, stamp, frame_id):
+
+    msg = PoseStamped()
+
+    msg.header.stamp = stamp
+    msg.header.frame_id = frame_id
+
+    msg.pose.position.x = float(T[0, 3])
+    msg.pose.position.y = float(T[1, 3])
+    msg.pose.position.z = float(T[2, 3])
+
+    q = rotation_matrix_to_quaternion(
+        T[:3, :3]
+    )
+
+    msg.pose.orientation.x = float(q[0])
+    msg.pose.orientation.y = float(q[1])
+    msg.pose.orientation.z = float(q[2])
+    msg.pose.orientation.w = float(q[3])
+
+    return msg
+
+
+# ============================================================
+# NODE
+# ============================================================
+
+class OptiTrackTransform(Node):
 
     def __init__(self):
+
         super().__init__('optitrack_transform')
-
-        self.aruco_pose = None
-        self.optitrack_pose = None
-
-        # Camera -> OptiTrack world
-        self.C_T_O = None
-
-        # --------------------------------------------------
-        # KNOWN RIGID BODY -> ARUCO MARKER TRANSFORM
-        #
-        # CHANGE THESE TO YOUR MEASURED VALUES.
-        #
-        # Example below:
-        # marker is 10 cm along rigid body's +X axis
-        # and axes are aligned.
-        # --------------------------------------------------
-
-        self.B_T_M = np.eye(4)
         
-        theta = np.deg2rad(90)
+        # TF broadcaster for RViz
+        self.tf_broadcaster = TransformBroadcaster(self)
+        
+        # ============================================================
+        # OPTITRACK WORLD TF FOR RVIZ
+        # ============================================================
 
-        self.B_T_M[:3, :3] = np.array([
-            [np.cos(theta), -np.sin(theta), 0],
-            [np.sin(theta),  np.cos(theta), 0],
-            [0,              0,             1]
-        ])
+        self.static_tf_broadcaster = StaticTransformBroadcaster(self)
 
-        self.B_T_M[0, 3] = 0.19
-        self.B_T_M[1, 3] = 0.075
-        self.B_T_M[2, 3] = 0.0146
+        world_tf = TransformStamped()
 
-        # --------------------------------------------------
-        # ArUco subscription
-        # --------------------------------------------------
+        world_tf.header.stamp = self.get_clock().now().to_msg()
 
-        self.create_subscription(
-            PoseStamped,
-            '/aruco/pose',
-            self.aruco_callback,
-            10
-        )
+        # RViz root frame
+        world_tf.header.frame_id = 'map'
 
-        # --------------------------------------------------
-        # OptiTrack QoS
-        # VRPN publisher is BEST_EFFORT
-        # --------------------------------------------------
+        # OptiTrack world frame
+        world_tf.child_frame_id = 'world'
 
-        optitrack_qos = QoSProfile(
+        # Identity transform
+        world_tf.transform.translation.x = 0.0
+        world_tf.transform.translation.y = 0.0
+        world_tf.transform.translation.z = 0.0
+
+        world_tf.transform.rotation.x = 0.0
+        world_tf.transform.rotation.y = 0.0
+        world_tf.transform.rotation.z = 0.0
+        world_tf.transform.rotation.w = 1.0
+
+        self.static_tf_broadcaster.sendTransform(world_tf)
+
+        # ====================================================
+        # CHANGE THESE TOPICS TO MATCH MOTIVE
+        # ====================================================
+        qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
             depth=10
         )
+        
+        self.camera_rigid_body_topic = \
+            '/vrpn_mocap/camera_rigidbody/pose'
+
+        self.marker_rigid_body_topic = \
+            '/vrpn_mocap/marker_rigidbody/pose'
+
+        self.aruco_topic = \
+            '/aruco/pose'
+
+
+        # ====================================================
+        # LATEST CAMERA RIGID BODY POSE
+        # ====================================================
+
+        self.O_T_BC = None
+
+
+        # ====================================================
+        # SUBSCRIBERS
+        # ====================================================
 
         self.create_subscription(
             PoseStamped,
-            '/vrpn_mocap/rigidbody1/pose',
-            self.optitrack_callback,
-            optitrack_qos
+            self.camera_rigid_body_topic,
+            self.camera_rigid_body_callback,
+            qos
         )
-        
-        self.body_pose_pub = self.create_publisher(
+
+        self.create_subscription(
             PoseStamped,
-            '/optitrack/body_pose_camera',
+            self.marker_rigid_body_topic,
+            self.marker_rigid_body_callback,
+            qos
+        )
+
+        self.create_subscription(
+            PoseStamped,
+            self.aruco_topic,
+            self.aruco_callback,
             10
         )
 
-        # --------------------------------------------------
-        # Output:
-        # OptiTrack estimate of MARKER pose in CAMERA frame
-        # --------------------------------------------------
 
-        self.pose_pub = self.create_publisher(
+        # ====================================================
+        # PUBLISHERS
+        # ====================================================
+
+        # ArUco pose converted into OptiTrack world
+        self.aruco_world_pub = self.create_publisher(
             PoseStamped,
-            '/optitrack/marker_pose_camera',
+            '/aruco/pose_optitrack',
             10
         )
 
-        self.get_logger().info('OptiTrack comparison node started')
-        self.get_logger().info('Waiting for ArUco and OptiTrack poses...')
-
-
-    def aruco_callback(self, msg):
-        self.aruco_pose = msg
-
-
-    def optitrack_callback(self, msg):
-        self.optitrack_pose = msg
-
-        if self.aruco_pose is None:
-            return
-
-        # ArUco:
-        # camera -> marker
-        C_T_M = pose_to_matrix(
-            self.aruco_pose.pose
+        # Raw marker rigid body pose from OptiTrack
+        # republished with a convenient comparison topic
+        self.marker_world_pub = self.create_publisher(
+            PoseStamped,
+            '/optitrack/marker_pose',
+            10
         )
 
-        # OptiTrack:
-        # OptiTrack world -> rigid body
-        
-        O_T_B = pose_to_matrix(
-            self.optitrack_pose.pose
-        )
-        
-        # TEST
-        
-        # O_T_B_raw = pose_to_matrix(
-        #     self.optitrack_pose.pose
-        # )
 
-        # # Axis correction between OptiTrack/VRPN and camera-style coordinates
-        # R_axis = np.array([
-        #     [1,  0,  0],
-        #     [0,  0, 1],
-        #     [0,  -1,  0]
-        # ])
-
-        # T_axis = np.eye(4)
-        # T_axis[:3, :3] = R_axis
-
-        # O_T_B = T_axis @ O_T_B_raw
-
-        # --------------------------------------------------
-        # CALIBRATION
-        #
-        # C_T_M = C_T_O * O_T_B * B_T_M
-        #
-        # therefore:
-        #
-        # C_T_O =
-        # C_T_M * inv(B_T_M) * inv(O_T_B)
-        # --------------------------------------------------
-
-        if self.C_T_O is None:
-
-    # --------------------------------------------------
-    # 1. FIXED AXIS MAPPING
-    # OptiTrack world -> camera frame
-    # --------------------------------------------------
-
-            R_C_O = np.array([
-                [1, 0, 0],
-                [0, -1, 0],
-                [0, 0, -1]
-            ], dtype=np.float64)
-
-            # --------------------------------------------------
-            # 2. Find marker position according to OptiTrack
-            #    BEFORE translating into camera frame
-            #
-            # O_T_M = O_T_B * B_T_M
-            # --------------------------------------------------
-
-            O_T_M = O_T_B @ self.B_T_M
-
-            p_O_M = O_T_M[:3, 3]
-            p_C_M = C_T_M[:3, 3]
-
-            # --------------------------------------------------
-            # 3. Calculate TRANSLATION ONLY
-            #
-            # p_C_M = R_C_O * p_O_M + t_C_O
-            #
-            # therefore:
-            #
-            # t_C_O = p_C_M - R_C_O * p_O_M
-            # --------------------------------------------------
-
-            t_C_O = p_C_M - (R_C_O @ p_O_M)
-
-            # --------------------------------------------------
-            # 4. Construct complete C_T_O
-            # --------------------------------------------------
-
-            self.C_T_O = np.eye(4)
-
-            self.C_T_O[:3, :3] = R_C_O
-            self.C_T_O[:3, 3] = t_C_O
-
-            self.get_logger().info(
-                f'Calibration complete\nC_T_O =\n{self.C_T_O}'
-            )
-
-        # --------------------------------------------------
-        # Transform OptiTrack rigid body into camera frame
-        #
-        # C_T_B = C_T_O * O_T_B
-        # --------------------------------------------------
-
-        C_T_B = (
-            self.C_T_O
-            @ O_T_B
+        self.get_logger().info(
+            'New OptiTrack transform pipeline running'
         )
 
-        # --------------------------------------------------
-        # Move from rigid-body origin to marker origin
-        #
-        # C_T_M_opti = C_T_B * B_T_M
-        # --------------------------------------------------
-        
-        # --------------------------------------------------
-        # TEST MAKER OFFSET IN RVIZ - START
-        
-        # B_T_M_test = self.B_T_M.copy()
-
-        # B_T_M_test[0, 3] += 1.0
-
-        # C_T_M_opti = (
-        #     C_T_B
-        #     @ B_T_M_test
-        # )
-        
-        # TEST MAKER OFFSET IN RVIZ - END
-        # --------------------------------------------------
-
-        C_T_M_opti = (
-            C_T_B
-            @ self.B_T_M
+        self.get_logger().warn(
+            'Camera rigid-body -> camera optical offset '
+            'is currently assumed to be identity.'
         )
         
-        # Publish rigid-body origin in camera frame
-        body_output = PoseStamped()
+    def publish_tf(self, T, parent_frame, child_frame):
 
-        body_output.header.stamp = msg.header.stamp
-        body_output.header.frame_id = self.aruco_pose.header.frame_id
+        tf_msg = TransformStamped()
 
-        body_output.pose.position.x = float(C_T_B[0, 3])
-        body_output.pose.position.y = float(C_T_B[1, 3])
-        body_output.pose.position.z = float(C_T_B[2, 3])
+        tf_msg.header.stamp = self.get_clock().now().to_msg()
+        tf_msg.header.frame_id = parent_frame
+        tf_msg.child_frame_id = child_frame
 
-        q_body = matrix_to_quaternion(C_T_B[:3, :3])
+        tf_msg.transform.translation.x = float(T[0, 3])
+        tf_msg.transform.translation.y = float(T[1, 3])
+        tf_msg.transform.translation.z = float(T[2, 3])
 
-        body_output.pose.orientation.x = float(q_body[0])
-        body_output.pose.orientation.y = float(q_body[1])
-        body_output.pose.orientation.z = float(q_body[2])
-        body_output.pose.orientation.w = float(q_body[3])
+        q = rotation_matrix_to_quaternion(T[:3, :3])
 
-        self.body_pose_pub.publish(body_output)
+        tf_msg.transform.rotation.x = float(q[0])
+        tf_msg.transform.rotation.y = float(q[1])
+        tf_msg.transform.rotation.z = float(q[2])
+        tf_msg.transform.rotation.w = float(q[3])
 
-        # --------------------------------------------------
-        # Publish
-        # --------------------------------------------------
+        self.tf_broadcaster.sendTransform(tf_msg)
+
+
+    # ========================================================
+    # CAMERA RIGID BODY
+    # ========================================================
+
+    def camera_rigid_body_callback(self, msg):
+
+        self.O_T_BC = pose_to_matrix(msg.pose)
+
+        self.publish_tf(
+            self.O_T_BC,
+            'world',
+            'camera_rigidbody'
+        )
+
+
+    # ========================================================
+    # MARKER RIGID BODY
+    # ========================================================
+
+    def marker_rigid_body_callback(self, msg):
+
+        # For now, simply republish the marker rigid-body pose.
+        #
+        # This is your OptiTrack ground truth.
+        #
+        # Later, if the rigid-body origin is offset from
+        # the physical ArUco centre, you can add B_M_T_M here.
 
         output = PoseStamped()
 
-        output.header.stamp = msg.header.stamp
+        output.header = msg.header
 
-        # Same frame as ArUco
-        output.header.frame_id = (
-            self.aruco_pose.header.frame_id
+        output.header.frame_id = 'world'
+
+        output.pose = msg.pose
+        
+        O_T_BM = pose_to_matrix(msg.pose)
+        
+        self.publish_tf(
+            O_T_BM,
+            'world',
+            'marker_rigidbody'
         )
 
-        output.pose.position.x = float(
-            C_T_M_opti[0, 3]
+        self.marker_world_pub.publish(
+            output
         )
 
-        output.pose.position.y = float(
-            C_T_M_opti[1, 3]
+
+    # ========================================================
+    # ARUCO
+    # ========================================================
+
+    def aruco_callback(self, msg):
+
+        if self.O_T_BC is None:
+
+            self.get_logger().warn(
+                'Waiting for camera rigid-body pose...',
+                throttle_duration_sec=2.0
+            )
+
+            return
+
+
+        # ----------------------------------------------------
+        # ArUco detector gives:
+        #
+        # C_T_M
+        #
+        # marker pose relative to camera optical frame
+        # ----------------------------------------------------
+
+        C_T_M = pose_to_matrix(
+            msg.pose
         )
 
-        output.pose.position.z = float(
-            C_T_M_opti[2, 3]
+
+        # ====================================================
+        # TEMPORARY CAMERA EXTRINSIC
+        #
+        # Camera rigid body -> camera optical frame
+        #
+        # FOR NOW:
+        #
+        # BC_T_C = Identity
+        #
+        # Later replace this with your calibrated transform.
+        # ====================================================
+
+        BC_T_C = np.eye(4)
+
+
+        # ====================================================
+        # NEW TRANSFORM CHAIN
+        #
+        # O_T_M =
+        #
+        # O_T_BC
+        # *
+        # BC_T_C
+        # *
+        # C_T_M
+        #
+        # Currently BC_T_C = I
+        # ====================================================
+
+        O_T_M = (
+            self.O_T_BC
+            @ BC_T_C
+            @ C_T_M
+        )
+        
+        self.publish_tf(
+            O_T_M,
+            'world',
+            'aruco_marker'
         )
 
-        q = matrix_to_quaternion(
-            C_T_M_opti[:3, :3]
+
+        # ----------------------------------------------------
+        # Publish ArUco estimate in OptiTrack world
+        # ----------------------------------------------------
+
+        output = matrix_to_pose_stamped(
+            O_T_M,
+            msg.header.stamp,
+            'world'
         )
 
-        output.pose.orientation.x = float(q[0])
-        output.pose.orientation.y = float(q[1])
-        output.pose.orientation.z = float(q[2])
-        output.pose.orientation.w = float(q[3])
-
-        self.pose_pub.publish(output)
+        self.aruco_world_pub.publish(
+            output
+        )
 
 
 def main(args=None):
 
     rclpy.init(args=args)
 
-    node = OptitrackTransform()
+    node = OptiTrackTransform()
 
     try:
+
         rclpy.spin(node)
 
     except KeyboardInterrupt:
+
         pass
 
-    node.destroy_node()
+    finally:
 
-    if rclpy.ok():
+        node.destroy_node()
         rclpy.shutdown()
 
 
 if __name__ == '__main__':
+
     main()
