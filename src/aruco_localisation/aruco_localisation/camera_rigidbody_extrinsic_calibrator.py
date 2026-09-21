@@ -22,7 +22,7 @@ CHECKERBOARD_COLS = 10       # <-- CHANGE
 CHECKERBOARD_ROWS = 7       # <-- CHANGE
 
 # Physical checkerboard square size [m]
-SQUARE_SIZE = 0.029         # <-- CHANGE
+SQUARE_SIZE = 0.028         # <-- CHANGE
 
 
 # ------------------------------------------------------------
@@ -529,8 +529,8 @@ class CameraRigidBodyExtrinsicCalibrator(Node):
                 # =============================================
 
                 BP_T_P = np.array([
-                    [1.0, 0.0, 0.0, 0.047],
-                    [0.0, 0.0, -1.0,-0.037],
+                    [1.0, 0.0, 0.0, 0.039],
+                    [0.0, 0.0, -1.0, 0.035],
                     [0.0, 1.0, 0.0,  0.015],
                     [0.0, 0.0, 0.0,  1.000]
                 ])
@@ -543,21 +543,21 @@ class CameraRigidBodyExtrinsicCalibrator(Node):
                     @ BP_T_P
                 )
                 
-                R_BC_C_expected = np.array([
-                    [1.0, 0.0,  0.0],
-                    [0.0, 0.0, -1.0],
-                    [0.0, 1.0,  0.0]
-                ])
+                # R_BC_C_expected = np.array([
+                #     [1.0, 0.0,  0.0],
+                #     [0.0, 0.0, -1.0],
+                #     [0.0, 1.0,  0.0]
+                # ])
 
-                opencv_in_camera_rb = R_BC_C_expected @ C_T_P[:3, 3]
+                # opencv_in_camera_rb = R_BC_C_expected @ C_T_P[:3, 3]
 
-                print("\n===== AXIS TEST =====")
-                print("OptiTrack camera RB -> board:")
-                print(BC_T_BP[:3, 3])
+                # print("\n===== AXIS TEST =====")
+                # print("OptiTrack camera RB -> board:")
+                # print(BC_T_BP[:3, 3])
 
-                print("OpenCV transformed into approximate camera RB axes:")
-                print(opencv_in_camera_rb)
-                print("=====================\n")
+                # print("OpenCV transformed into approximate camera RB axes:")
+                # print(opencv_in_camera_rb)
+                # print("=====================\n")
 
 
                 # =============================================

@@ -55,6 +55,9 @@ class ArucoDetectorNode(Node):
         self.dictionary = cv2.aruco.getPredefinedDictionary(
             cv2.aruco.DICT_6X6_250
         )
+        self.dictionary = cv2.aruco.getPredefinedDictionary(
+            cv2.aruco.DICT_6X6_50
+        )
 
         self.detector_parameters = cv2.aruco.DetectorParameters()
 
