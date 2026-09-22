@@ -7,6 +7,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from geometry_msgs.msg import PoseStamped, TransformStamped
 from tf2_ros import StaticTransformBroadcaster
 from tf2_ros import TransformBroadcaster
+from scipy.spatial.transform import Rotation
 import numpy as np
 
 
@@ -261,6 +262,12 @@ class OptiTrackTransform(Node):
             '/optitrack/marker_pose',
             10
         )
+        
+        self.camera_optical_pub = self.create_publisher(
+            PoseStamped,
+            '/optitrack/camera_optical_pose',
+            10
+        )
 
 
         self.get_logger().info(
@@ -298,6 +305,16 @@ class OptiTrackTransform(Node):
     # CAMERA RIGID BODY
     # ========================================================
 
+    # def camera_rigid_body_callback(self, msg):
+
+    #     self.O_T_BC = pose_to_matrix(msg.pose)
+
+    #     self.publish_tf(
+    #         self.O_T_BC,
+    #         'world',
+    #         'camera_rigidbody'
+    #     )
+        
     def camera_rigid_body_callback(self, msg):
 
         self.O_T_BC = pose_to_matrix(msg.pose)
@@ -307,6 +324,32 @@ class OptiTrackTransform(Node):
             'world',
             'camera_rigidbody'
         )
+
+        # Camera rigid body -> camera optical
+        BC_T_C = np.array([
+            [ 0.99933447,  0.02488331,  0.02667272,  0.00647820],
+            [ 0.02684832, -0.00674951, -0.99961673, -0.03848347],
+            [-0.02469375,  0.99966758, -0.00741309, -0.01190646],
+            [ 0.0,         0.0,         0.0,         1.0       ]
+        ], dtype=np.float64)
+
+        # World -> camera optical
+        O_T_C = self.O_T_BC @ BC_T_C
+
+        self.publish_tf(
+            O_T_C,
+            'world',
+            'camera_optical'
+        )
+
+        # Publish as PoseStamped
+        optical_pose = matrix_to_pose_stamped(
+            O_T_C,
+            msg.header.stamp,
+            'world'
+        )
+
+        self.camera_optical_pub.publish(optical_pose)
 
 
     # ========================================================
@@ -386,13 +429,23 @@ class OptiTrackTransform(Node):
 
         #BC_T_C = np.eye(4)
         
-        BC_T_C = np.array([
-            [ 0.99993923, -0.00269313,  0.01069001,  0.00812120],
-            [ 0.01064980, -0.01452778, -0.99983775,  0.00625027],
-            [ 0.00284800,  0.99989084, -0.01449822, -0.02248277],
-            [ 0.0,         0.0,         0.0,         1.0       ]
-        ])
-
+        # ORGINAL CALIBRATED TRANSFORM FROM CAMERA RIGID BODY TO CAMERA OPTICAL FRAME
+        
+        # BC_T_C = np.array([
+        #     [ 0.99993923, -0.00269313,  0.01069001,  0.00812120],
+        #     [ 0.01064980, -0.01452778, -0.99983775,  0.00625027],
+        #     [ 0.00284800,  0.99989084, -0.01449822, -0.02248277],
+        #     [ 0.0,         0.0,         0.0,         1.0       ]
+        # ])
+        
+        # SECONDARY CALIBRATION (FROM CAMERA RIGID BODY TO CAMERA OPTICAL FRAME)
+        # BC_T_C = np.array([
+        #     [ 0.99933447,  0.02488331,  0.02667272,  0.00647820],
+        #     [ 0.02684832, -0.00674951, -0.99961673, -0.03848347],
+        #     [-0.02469375,  0.99966758, -0.00741309, -0.01190646],
+        #     [ 0.0,         0.0,         0.0,         1.0       ]
+        # ], dtype=np.float64)
+        
         
         # ====================================================
         # NEW TRANSFORM CHAIN

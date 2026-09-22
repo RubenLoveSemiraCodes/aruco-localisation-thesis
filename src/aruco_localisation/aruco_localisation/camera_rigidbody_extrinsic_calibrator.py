@@ -12,6 +12,9 @@ from sensor_msgs.msg import Image
 from geometry_msgs.msg import PoseStamped
 from cv_bridge import CvBridge
 
+from geometry_msgs.msg import TransformStamped
+from tf2_ros import StaticTransformBroadcaster
+from scipy.spatial.transform import Rotation
 
 # ============================================================
 # USER SETTINGS
@@ -193,6 +196,8 @@ class CameraRigidBodyExtrinsicCalibrator(Node):
         )
 
         self.bridge = CvBridge()
+        
+        self.static_tf_broadcaster = StaticTransformBroadcaster(self)
 
         # ----------------------------------------------------
         # Latest OptiTrack poses
@@ -262,6 +267,7 @@ class CameraRigidBodyExtrinsicCalibrator(Node):
             self.image_callback,
             10
         )
+        
 
 
         self.get_logger().info(
@@ -271,6 +277,8 @@ class CameraRigidBodyExtrinsicCalibrator(Node):
         self.get_logger().info(
             'Waiting for camera, checkerboard and OptiTrack poses...'
         )
+        
+    
 
 
     # ========================================================
@@ -529,9 +537,9 @@ class CameraRigidBodyExtrinsicCalibrator(Node):
                 # =============================================
 
                 BP_T_P = np.array([
-                    [1.0, 0.0, 0.0, 0.039],
-                    [0.0, 0.0, -1.0, 0.035],
-                    [0.0, 1.0, 0.0,  0.015],
+                    [1.0, 0.0, 0.0, 0.037],
+                    [0.0, 0.0, -1.0, -0.015],
+                    [0.0, 1.0, 0.0,  0.036],
                     [0.0, 0.0, 0.0,  1.000]
                 ])
 
@@ -647,6 +655,34 @@ class CameraRigidBodyExtrinsicCalibrator(Node):
         )
 
         cv2.waitKey(1)
+        
+    
+    def publish_calibrated_camera_tf(self, BC_T_C):
+
+            t = TransformStamped()
+
+            t.header.stamp = self.get_clock().now().to_msg()
+            t.header.frame_id = 'camera_rigidbody'
+            t.child_frame_id = 'camera_optical_frame'
+
+            # Translation
+            t.transform.translation.x = float(BC_T_C[0, 3])
+            t.transform.translation.y = float(BC_T_C[1, 3])
+            t.transform.translation.z = float(BC_T_C[2, 3])
+
+            # Rotation matrix -> quaternion
+            quat = Rotation.from_matrix(BC_T_C[:3, :3]).as_quat()
+
+            t.transform.rotation.x = float(quat[0])
+            t.transform.rotation.y = float(quat[1])
+            t.transform.rotation.z = float(quat[2])
+            t.transform.rotation.w = float(quat[3])
+
+            self.static_tf_broadcaster.sendTransform(t)
+
+            self.get_logger().info(
+                'Published camera_rigidbody -> camera_optical_frame TF'
+            )
 
 
     # ========================================================
@@ -709,6 +745,8 @@ class CameraRigidBodyExtrinsicCalibrator(Node):
             translations,
             axis=0
         )
+        
+        
 
 
         # ----------------------------------------------------
@@ -733,6 +771,8 @@ class CameraRigidBodyExtrinsicCalibrator(Node):
         BC_T_C[:3, :3] = R_mean
 
         BC_T_C[:3, 3] = translation_mean
+        
+    
 
 
         # ====================================================
@@ -838,6 +878,8 @@ class CameraRigidBodyExtrinsicCalibrator(Node):
         )
 
         print()
+        
+        self.publish_calibrated_camera_tf(BC_T_C)
 
 
 # ============================================================
