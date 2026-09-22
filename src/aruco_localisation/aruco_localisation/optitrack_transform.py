@@ -216,7 +216,13 @@ class OptiTrackTransform(Node):
         # ====================================================
 
         self.O_T_BC = None
-
+        
+        self.BC_T_C = np.array([
+            [ 0.99933447,  0.02488331,  0.02667272,  0.00647820],
+            [ 0.02684832, -0.00674951, -0.99961673, -0.03848347],
+            [-0.02469375,  0.99966758, -0.00741309, -0.01190646],
+            [ 0.0,         0.0,         0.0,         1.0       ]
+        ], dtype=np.float64)
 
         # ====================================================
         # SUBSCRIBERS
@@ -274,10 +280,11 @@ class OptiTrackTransform(Node):
             'New OptiTrack transform pipeline running'
         )
 
-        self.get_logger().warn(
-            'Camera rigid-body -> camera optical offset '
-            'is currently assumed to be identity.'
+        self.get_logger().info(
+            'Using calibrated camera rigid-body -> camera optical transform'
         )
+        
+        
         
     def publish_tf(self, T, parent_frame, child_frame):
 
@@ -326,15 +333,15 @@ class OptiTrackTransform(Node):
         )
 
         # Camera rigid body -> camera optical
-        BC_T_C = np.array([
-            [ 0.99933447,  0.02488331,  0.02667272,  0.00647820],
-            [ 0.02684832, -0.00674951, -0.99961673, -0.03848347],
-            [-0.02469375,  0.99966758, -0.00741309, -0.01190646],
-            [ 0.0,         0.0,         0.0,         1.0       ]
-        ], dtype=np.float64)
+        # BC_T_C = np.array([
+        #     [ 0.99933447,  0.02488331,  0.02667272,  0.00647820],
+        #     [ 0.02684832, -0.00674951, -0.99961673, -0.03848347],
+        #     [-0.02469375,  0.99966758, -0.00741309, -0.01190646],
+        #     [ 0.0,         0.0,         0.0,         1.0       ]
+        # ], dtype=np.float64)
 
         # World -> camera optical
-        O_T_C = self.O_T_BC @ BC_T_C
+        O_T_C = self.O_T_BC @ self.BC_T_C
 
         self.publish_tf(
             O_T_C,
@@ -463,7 +470,7 @@ class OptiTrackTransform(Node):
 
         O_T_M = (
             self.O_T_BC
-            @ BC_T_C
+            @ self.BC_T_C
             @ C_T_M
         )
         
