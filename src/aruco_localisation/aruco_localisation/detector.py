@@ -22,7 +22,7 @@ class ArucoDetectorNode(Node):
         self.declare_parameter('image_topic', '/image_raw')
 
         # Marker size in meters.
-        self.declare_parameter('marker_length', 0.194)
+        self.declare_parameter('marker_length', 0.100)
         self.declare_parameter('camera_frame', 'camera_frame')
         self.declare_parameter('display_window', True)
 
@@ -48,6 +48,12 @@ class ArucoDetectorNode(Node):
             self.get_parameter('display_window')
             .get_parameter_value()
             .bool_value
+        )
+        
+        self.detection_publisher = self.create_publisher(
+            Int32,
+            '/aruco/detected',
+            10
         )
 
         self.bridge = CvBridge()
@@ -131,7 +137,7 @@ class ArucoDetectorNode(Node):
 
         self.total_frames = 0
         self.detected_frames = 0
-        self.max_frames = 1000
+        self.max_frames = 101
         self.finsihed = False
 
         self.get_logger().info('ArUco detector started')
@@ -174,6 +180,19 @@ class ArucoDetectorNode(Node):
 
         corners, ids, _ = self.aruco_detector.detectMarkers(gray)
         
+        # ==========================================
+        # RECORD DETECTION RESULT FOR EVERY FRAME
+        # ==========================================
+
+        detected_msg = Int32()
+
+        if ids is not None and len(ids) > 0:
+            detected_msg.data = 1
+        else:
+            detected_msg.data = 0
+
+        self.detection_publisher.publish(detected_msg)
+        
         if ids is not None and len(ids) > 0:
             self.detected_frames += 1
 
@@ -208,6 +227,27 @@ class ArucoDetectorNode(Node):
                 rotation_vector = rvecs[index]
                 translation_vector = tvecs[index]
                 
+                # ==========================================
+                # VIEWING ANGLE RELATIVE TO CAMERA
+                # ==========================================
+
+                # Convert marker rotation vector to rotation matrix
+                R_marker, _ = cv2.Rodrigues(rotation_vector)
+
+                # Marker plane normal (+Z axis)
+                marker_normal = R_marker @ np.array([0.0, 0.0, 1.0])
+
+                # Camera optical axis (+Z in OpenCV camera frame)
+                camera_axis = np.array([0.0, 0.0, 1.0])
+
+                # Angle between marker normal and camera optical axis
+                cos_angle = np.dot(marker_normal, camera_axis)
+                cos_angle = np.clip(abs(cos_angle), -1.0, 1.0)
+
+                viewing_angle = np.degrees(np.arccos(cos_angle))
+
+                print(f"Viewing angle relative to camera: {viewing_angle:.2f} deg")
+                
                 rvec = np.asarray(rvec, dtype=np.float64).reshape(3, 1)
                 tvec = np.asarray(tvec, dtype=np.float64).reshape(3, 1)
 
@@ -227,13 +267,21 @@ class ArucoDetectorNode(Node):
 
                 cv2.putText(
                     frame,
-                    f'ID: {marker_id}  Dist: {distance:.3f} m',
+                    f'ID: {marker_id} Dist: {distance:.3f}m Angle: {viewing_angle:.2f}deg',
                     (centre_x - 200, centre_y - 50),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.5,
                     (0, 255, 0),
                     2
                 )
+                
+                cv2.drawFrameAxes(
+                frame,
+                self.camera_matrix,
+                self.dist_coeffs,
+                rvec,
+                tvec,
+                0.05)
 
                 pose_message = self.create_pose_message(
                     image_message,
