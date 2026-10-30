@@ -26,6 +26,8 @@ setup(
         'console_scripts': [
             'detector = aruco_localisation.detector:main',
             'tf_publisher = aruco_localisation.tf_publisher:main',
+            'optitrack_transform = aruco_localisation.optitrack_transform:main',
+            'camera_rigidbody_extrinsic_calibrator = aruco_localisation.camera_rigidbody_extrinsic_calibrator:main',
         ],
     },
 )

@@ -22,7 +22,7 @@ class ArucoDetectorNode(Node):
         self.declare_parameter('image_topic', '/image_raw')
 
         # Marker size in meters.
-        self.declare_parameter('marker_length', 0.1)
+        self.declare_parameter('marker_length', 0.100)
         self.declare_parameter('camera_frame', 'camera_frame')
         self.declare_parameter('display_window', True)
 
@@ -49,31 +49,51 @@ class ArucoDetectorNode(Node):
             .get_parameter_value()
             .bool_value
         )
+        
+        self.detection_publisher = self.create_publisher(
+            Int32,
+            '/aruco/detected',
+            10
+        )
 
         self.bridge = CvBridge()
+        
+        self.dictionary = cv2.aruco.getPredefinedDictionary(
+            cv2.aruco.DICT_6X6_250
+        )
+        self.dictionary = cv2.aruco.getPredefinedDictionary(
+            cv2.aruco.DICT_6X6_50
+        )
+
+        self.detector_parameters = cv2.aruco.DetectorParameters()
+
+        self.aruco_detector = cv2.aruco.ArucoDetector(
+            self.dictionary,
+            self.detector_parameters
+        )
 
         # ArUco detector configuration.
         self.aruco_dictionary = cv2.aruco.getPredefinedDictionary(
             cv2.aruco.DICT_4X4_50
         )
 
-        detector_parameters = cv2.aruco.DetectorParameters_create()
+        detector_parameters = cv2.aruco.DetectorParameters()
         self.detector_parameters = detector_parameters
 
         # Your camera calibration.
-        self.camera_matrix = np.array(
-            [
-                [988.4335, 0.0, 651.0643],
-                [0.0, 991.565, 360.8128],
-                [0.0, 0.0, 1.0],
-            ],
-            dtype=np.float64
-        )
+        self.camera_matrix = np.array([
+            [386.2490539550781, 0.0, 325.697021484375],
+            [0.0, 385.8675537109375, 247.0854034423828],
+            [0.0, 0.0, 1.0]
+        ], dtype=np.float64)
 
-        self.dist_coeffs = np.array(
-            [0.1234, -0.1122, 0.0, 0.0, 0.0],
-            dtype=np.float64
-        )
+        self.dist_coeffs = np.array([
+            -0.054759636521339417,
+            0.06454092264175415,
+            -0.0003352328494656831,
+            0.0011062893318012357,
+            -0.02064184844493866
+        ], dtype=np.float64)
 
         # Subscribe to images published by the camera node.
         self.image_subscription = self.create_subscription(
@@ -87,6 +107,17 @@ class ArucoDetectorNode(Node):
         self.pose_publisher = self.create_publisher(
             PoseStamped,
             '/aruco/pose',
+            10
+        )
+        self.total_frames_publisher = self.create_publisher(
+            Int32,
+            '/aruco/total_frames',
+            10
+        )
+
+        self.detected_frames_publisher = self.create_publisher(
+            Int32,
+            '/aruco/detected_frames',
             10
         )
 
@@ -106,6 +137,8 @@ class ArucoDetectorNode(Node):
 
         self.total_frames = 0
         self.detected_frames = 0
+        self.max_frames = 101
+        self.finsihed = False
 
         self.get_logger().info('ArUco detector started')
         self.get_logger().info(f'Subscribing to: {image_topic}')
@@ -114,6 +147,9 @@ class ArucoDetectorNode(Node):
 
     def image_callback(self, image_message: Image) -> None:
         """Process one ROS camera image."""
+        
+        if self.finsihed:
+            return
 
         try:
             frame = self.bridge.imgmsg_to_cv2(
@@ -127,39 +163,102 @@ class ArucoDetectorNode(Node):
             return
 
         self.total_frames += 1
+        if self.total_frames > self.max_frames:
+            self.finsihed = True
+            self.get_logger().info(
+                f'Maximum frame count of {self.max_frames} reached. '
+                'Stopping detection.'
+            )
+            return
+        
+        
 
-        corners, ids, _ = cv2.aruco.detectMarkers(
+        gray = cv2.cvtColor(
         frame,
-        self.aruco_dictionary,
-        parameters=self.detector_parameters
-)
+        cv2.COLOR_BGR2GRAY
+    )
 
+        corners, ids, _ = self.aruco_detector.detectMarkers(gray)
+        
+        # ==========================================
+        # RECORD DETECTION RESULT FOR EVERY FRAME
+        # ==========================================
+
+        detected_msg = Int32()
+
+        if ids is not None and len(ids) > 0:
+            detected_msg.data = 1
+        else:
+            detected_msg.data = 0
+
+        self.detection_publisher.publish(detected_msg)
+        
         if ids is not None and len(ids) > 0:
             self.detected_frames += 1
 
             cv2.aruco.drawDetectedMarkers(frame, corners, ids)
 
-            rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(
-                corners,
-                self.marker_length,
+            marker_points = np.array([
+            [-self.marker_length / 2,  self.marker_length / 2, 0],
+            [ self.marker_length / 2,  self.marker_length / 2, 0],
+            [ self.marker_length / 2, -self.marker_length / 2, 0],
+            [-self.marker_length / 2, -self.marker_length / 2, 0]
+        ], dtype=np.float32)
+
+        rvecs = []
+        tvecs = []
+
+        for marker_corners in corners:
+            success, rvec, tvec = cv2.solvePnP(
+                marker_points,
+                marker_corners,
                 self.camera_matrix,
-                self.dist_coeffs
+                self.dist_coeffs,
+                flags=cv2.SOLVEPNP_IPPE_SQUARE
             )
+
+            if success:
+                rvecs.append(rvec)
+                tvecs.append(tvec)
 
             for index, marker_id_array in enumerate(ids):
                 marker_id = int(marker_id_array[0])
 
-                rotation_vector = rvecs[index][0]
-                translation_vector = tvecs[index][0]
+                rotation_vector = rvecs[index]
+                translation_vector = tvecs[index]
+                
+                # ==========================================
+                # VIEWING ANGLE RELATIVE TO CAMERA
+                # ==========================================
 
-                cv2.drawFrameAxes(
-                    frame,
-                    self.camera_matrix,
-                    self.dist_coeffs,
-                    rotation_vector,
-                    translation_vector,
-                    self.marker_length * 0.75
-                )
+                # Convert marker rotation vector to rotation matrix
+                R_marker, _ = cv2.Rodrigues(rotation_vector)
+
+                # Marker plane normal (+Z axis)
+                marker_normal = R_marker @ np.array([0.0, 0.0, 1.0])
+
+                # Camera optical axis (+Z in OpenCV camera frame)
+                camera_axis = np.array([0.0, 0.0, 1.0])
+
+                # Angle between marker normal and camera optical axis
+                cos_angle = np.dot(marker_normal, camera_axis)
+                cos_angle = np.clip(abs(cos_angle), -1.0, 1.0)
+
+                viewing_angle = np.degrees(np.arccos(cos_angle))
+
+                print(f"Viewing angle relative to camera: {viewing_angle:.2f} deg")
+                
+                rvec = np.asarray(rvec, dtype=np.float64).reshape(3, 1)
+                tvec = np.asarray(tvec, dtype=np.float64).reshape(3, 1)
+
+                # cv2.drawFrameAxes(
+                #     frame,
+                #     self.camera_matrix,
+                #     self.dist_coeffs,
+                #     rotation_vector,
+                #     translation_vector,
+                #     self.marker_length * 0.75
+                # )
 
                 distance = float(np.linalg.norm(translation_vector))
 
@@ -168,13 +267,21 @@ class ArucoDetectorNode(Node):
 
                 cv2.putText(
                     frame,
-                    f'ID: {marker_id}  Dist: {distance:.3f} m',
+                    f'ID: {marker_id} Dist: {distance:.3f}m Angle: {viewing_angle:.2f}deg',
                     (centre_x - 200, centre_y - 50),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.5,
                     (0, 255, 0),
                     2
                 )
+                
+                cv2.drawFrameAxes(
+                frame,
+                self.camera_matrix,
+                self.dist_coeffs,
+                rvec,
+                tvec,
+                0.05)
 
                 pose_message = self.create_pose_message(
                     image_message,
@@ -188,11 +295,22 @@ class ArucoDetectorNode(Node):
                 self.pose_publisher.publish(pose_message)
                 self.id_publisher.publish(id_message)
 
+        # detection_rate = (
+        #     100.0 * self.detected_frames / self.total_frames
+        #     if self.total_frames > 0
+        #     else 0.0
+        # )
+        total_msg = Int32()
+        total_msg.data = self.total_frames
+        self.total_frames_publisher.publish(total_msg)
+
+        detected_msg = Int32()
+        detected_msg.data = self.detected_frames
+        self.detected_frames_publisher.publish(detected_msg)
+        
         detection_rate = (
-            100.0 * self.detected_frames / self.total_frames
-            if self.total_frames > 0
-            else 0.0
-        )
+            self.detected_frames / self.total_frames
+        ) * 100
 
         cv2.putText(
             frame,
@@ -206,7 +324,7 @@ class ArucoDetectorNode(Node):
 
         cv2.putText(
             frame,
-            f'Frames: {self.total_frames}',
+            f'Frames: {self.total_frames}/{self.max_frames}',
             (30, 75),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.8,
@@ -219,6 +337,18 @@ class ArucoDetectorNode(Node):
         if self.display_window:
             cv2.imshow('ArUco Pose Estimation', frame)
             cv2.waitKey(1)
+            
+        if self.total_frames >= self.max_frames:
+            self.get_logger().info(
+                f'Trial complete: {self.detected_frames}/{self.total_frames} '
+                f'detected ({detection_rate:.1f}%)'
+            )
+
+            self.finished = True
+            rclpy.shutdown()
+            return
+            
+
 
     def create_pose_message(
         self,
